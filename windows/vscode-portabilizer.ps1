@@ -105,26 +105,41 @@ function Test-Prerequisites {
     Write-Success "Prerequisites check passed"
 }
 
-# Download VS Code using Invoke-WebRequest
-function Get-VSCode {
+# Download and extract VS Code directly to destination
+function Get-VSCodeAndExtract {
     param(
-        [string]$OutputPath
+        [string]$Destination
     )
     
     Write-Info "Downloading VS Code from: $VSCodeDownloadUrl"
     
+    # Download VS Code
+    $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
     try {
-        # Create a progress handler
-        $ProgressPreference = 'Continue'
+        # Disable progress for much faster downloads
+        $ProgressPreference = 'SilentlyContinue'
         
-        # Download with progress indication
-        Invoke-WebRequest -Uri $VSCodeDownloadUrl -OutFile $OutputPath -UseBasicParsing
+        # Download without progress indication for better performance
+        Invoke-WebRequest -Uri $VSCodeDownloadUrl -OutFile $tempArchive -UseBasicParsing
         
-        Write-Success "Download completed: $OutputPath"
+        Write-Success "Download completed"
+        Write-Info "Extracting VS Code directly to: $Destination"
+        
+        # Extract directly to destination using .NET
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($tempArchive, $Destination)
+        
+        Write-Success "Extraction completed"
     }
     catch {
-        Write-Error "Failed to download VS Code: $($_.Exception.Message)"
+        Write-Error "Failed to download or extract VS Code: $($_.Exception.Message)"
         throw
+    }
+    finally {
+        # Clean up temporary archive
+        if (Test-Path $tempArchive) {
+            Remove-Item -Path $tempArchive -Force
+        }
     }
 }
 
@@ -257,24 +272,9 @@ function Install-PortableVSCode {
     New-Item -Path $Destination -ItemType Directory -Force | Out-Null
     Write-Info "Created destination directory: $Destination"
     
-    # Download VS Code
-    $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
     try {
-        Get-VSCode -OutputPath $tempArchive
-        
-        # Extract VS Code to a temporary directory first
-        $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-        New-Item -Path $tempExtractDir -ItemType Directory -Force | Out-Null
-        
-        Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
-        
-        # Move contents from the extracted directory to the destination
-        # VS Code ZIP contains files directly (no root subdirectory)
-        Write-Info "Moving VS Code files from extraction directory"
-        Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $Destination
-        
-        # Clean up temporary extraction directory
-        Remove-Item -Path $tempExtractDir -Recurse -Force
+        # Download and extract directly to destination
+        Get-VSCodeAndExtract -Destination $Destination
         
         # Create empty data directory structure
         $dataDir = Join-Path $Destination "data"
@@ -283,11 +283,12 @@ function Install-PortableVSCode {
         Write-Success "Fresh portable VS Code installed successfully at: $Destination"
         Write-Info "You can now run VS Code with: $Destination\Code.exe"
     }
-    finally {
-        # Clean up temporary files
-        if (Test-Path $tempArchive) {
-            Remove-Item -Path $tempArchive -Force
+    catch {
+        # Clean up on failure
+        if (Test-Path $Destination) {
+            Remove-Item -Path $Destination -Recurse -Force
         }
+        throw
     }
 }
 
@@ -317,28 +318,9 @@ function New-PortableVSCode {
     New-Item -Path $Destination -ItemType Directory -Force | Out-Null
     Write-Info "Created destination directory: $Destination"
     
-    # Download VS Code
-    $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
     try {
-        Get-VSCode -OutputPath $tempArchive
-        
-        # Extract VS Code to a temporary directory first
-        $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-        New-Item -Path $tempExtractDir -ItemType Directory -Force | Out-Null
-        
-        Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
-        
-        # Move contents from the extracted subdirectory to the destination
-        $extractedDir = Get-ChildItem -Path $tempExtractDir -Directory | Select-Object -First 1
-        if ($extractedDir) {
-            Get-ChildItem -Path $extractedDir.FullName | Move-Item -Destination $Destination
-        } else {
-            # If no subdirectory, move all contents
-            Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $Destination
-        }
-        
-        # Clean up temporary extraction directory
-        Remove-Item -Path $tempExtractDir -Recurse -Force
+        # Download and extract directly to destination
+        Get-VSCodeAndExtract -Destination $Destination
         
         # Create data directory
         $dataDir = Join-Path $Destination "data"
@@ -365,11 +347,12 @@ function New-PortableVSCode {
         
         Write-Info "You can now run VS Code with: $Destination\Code.exe"
     }
-    finally {
-        # Clean up temporary files
-        if (Test-Path $tempArchive) {
-            Remove-Item -Path $tempArchive -Force
+    catch {
+        # Clean up on failure
+        if (Test-Path $Destination) {
+            Remove-Item -Path $Destination -Recurse -Force
         }
+        throw
     }
 }
 
@@ -405,32 +388,18 @@ function Update-PortableVSCode {
     Copy-Item -Path $dataFolder -Destination $backupDir -Recurse -Force
     
     try {
-        # Download new VS Code version
-        $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
-        Get-VSCode -OutputPath $tempArchive
-        
         # Remove old VS Code files (but keep data)
         Write-Info "Removing old VS Code files..."
         Get-ChildItem -Path $PortableFolder | Where-Object { $_.Name -ne "data" } | Remove-Item -Recurse -Force
         
-        # Extract new VS Code to a temporary directory
-        $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-        New-Item -Path $tempExtractDir -ItemType Directory -Force | Out-Null
-        
-        Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
-        
-        # Move contents from the extracted directory to the portable folder
-        # VS Code ZIP contains files directly (no root subdirectory)
-        Write-Info "Moving VS Code files from extraction directory"
-        Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $PortableFolder
-        
-        # Clean up temporary files
-        Remove-Item -Path $tempExtractDir -Recurse -Force
-        Remove-Item -Path $tempArchive -Force
+        # Download and extract new VS Code directly to portable folder
+        Get-VSCodeAndExtract -Destination $PortableFolder
         
         # Restore data directory
         Write-Info "Restoring data directory..."
-        Remove-Item -Path $dataFolder -Recurse -Force
+        if (Test-Path $dataFolder) {
+            Remove-Item -Path $dataFolder -Recurse -Force
+        }
         Move-Item -Path $backupDir -Destination $dataFolder
         
         Write-Success "Portable VS Code upgraded successfully at: $PortableFolder"
