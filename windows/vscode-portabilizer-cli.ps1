@@ -70,9 +70,9 @@ function Get-ValidPath {
 # Show menu
 function Show-Menu {
     Write-Host "Available commands:" -ForegroundColor Green
-    Write-Host "1. Create a new portable VS Code installation" -ForegroundColor White
-    Write-Host "2. Upgrade an existing portable installation" -ForegroundColor White
-    Write-Host "3. Show help" -ForegroundColor White
+    Write-Host "1. Create portable VS Code (auto-migrate if system installation exists)" -ForegroundColor White
+    Write-Host "2. Create fresh portable VS Code (no migration)" -ForegroundColor White
+    Write-Host "3. Upgrade an existing portable installation" -ForegroundColor White
     Write-Host "4. Exit" -ForegroundColor White
     Write-Host ""
 }
@@ -85,7 +85,7 @@ do {
     
     switch ($choice) {
         "1" {
-            Write-Host "Creating a new portable VS Code installation..." -ForegroundColor Green
+            Write-Host "Creating portable VS Code (auto-migrate if system installation exists)..." -ForegroundColor Green
             Write-Host ""
             $destFolder = Get-ValidPath "Enter destination folder (e.g., C:\Tools\VSCode-Portable)"
             
@@ -113,6 +113,34 @@ do {
         }
         
         "2" {
+            Write-Host "Creating fresh portable VS Code (no migration)..." -ForegroundColor Green
+            Write-Host ""
+            $destFolder = Get-ValidPath "Enter destination folder (e.g., C:\Tools\VSCode-Fresh)"
+            
+            if (Test-Path $destFolder) {
+                Write-Host "Warning: Destination folder already exists: $destFolder" -ForegroundColor Yellow
+                $overwrite = Read-Host "Do you want to continue? This may overwrite existing files (y/N)"
+                if ($overwrite -notmatch "^[Yy]") {
+                    Write-Host "Operation cancelled." -ForegroundColor Yellow
+                    continue
+                }
+            }
+            
+            Write-Host ""
+            Write-Host "Creating fresh portable VS Code at: $destFolder" -ForegroundColor Cyan
+            
+            try {
+                & $Portabilizer create -NoMigrate $destFolder
+                Write-Host ""
+                Write-Host "Success! Fresh portable VS Code has been created." -ForegroundColor Green
+            }
+            catch {
+                Write-Host ""
+                Write-Host "Error occurred during creation: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+        
+        "3" {
             Write-Host "Upgrading an existing portable VS Code installation..." -ForegroundColor Green
             Write-Host ""
             $portableFolder = Get-ValidPath "Enter existing portable folder path" -MustExist $true
@@ -137,10 +165,6 @@ do {
                 Write-Host ""
                 Write-Host "Error occurred during upgrade: $($_.Exception.Message)" -ForegroundColor Red
             }
-        }
-        
-        "3" {
-            & $Portabilizer help
         }
         
         "4" {

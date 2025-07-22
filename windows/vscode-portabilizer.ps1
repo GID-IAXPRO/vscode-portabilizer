@@ -7,7 +7,9 @@ param(
     [string]$Command,
     
     [Parameter(Position=1)]
-    [string]$Path
+    [string]$Path,
+    
+    [switch]$NoMigrate
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,12 +55,13 @@ vscode-portabilizer v$Version
 Tool to create and upgrade VS Code portable installations on Windows
 
 Usage:
-    .\vscode-portabilizer.ps1 create <destination_folder>    - Create a new portable VS Code installation
-    .\vscode-portabilizer.ps1 upgrade <portable_folder>      - Upgrade an existing portable VS Code installation
-    .\vscode-portabilizer.ps1 help                          - Show this help message
+    .\vscode-portabilizer.ps1 create [-NoMigrate] <destination_folder>  - Create a new portable VS Code installation
+    .\vscode-portabilizer.ps1 upgrade <portable_folder>                 - Upgrade an existing portable VS Code installation
+    .\vscode-portabilizer.ps1 help                                     - Show this help message
 
 Examples:
-    .\vscode-portabilizer.ps1 create C:\Tools\VSCode-Portable
+    .\vscode-portabilizer.ps1 create C:\Tools\VSCode-Portable           # Create with migration (if system installation exists)
+    .\vscode-portabilizer.ps1 create -NoMigrate C:\Tools\VSCode-Fresh   # Create without migration (fresh installation)
     .\vscode-portabilizer.ps1 upgrade C:\Tools\VSCode-Portable
 
 Requirements:
@@ -68,7 +71,9 @@ Requirements:
     - Administrator privileges may be required for some operations
 
 Notes:
-    - The create command will migrate your current VS Code configuration
+    - The create command migrates your current VS Code configuration by default if found
+    - Use -NoMigrate to skip migration and create a fresh installation
+    - If no system VS Code installation is found, a fresh installation is created automatically
     - The upgrade command preserves your data folder while updating VS Code
     - Only works with VS Code ZIP archives (portable mode)
 "@
@@ -184,8 +189,51 @@ function Copy-UserData {
     Write-Info "Created tmp directory for portable mode"
 }
 
-# Create a new portable VS Code installation
-function New-PortableVSCode {
+# Check if VS Code system installation exists
+function Test-SystemInstallation {
+    $hasData = $false
+    $hasExtensions = $false
+    
+    if ((Test-Path $UserDataDir) -and (Get-ChildItem -Path $UserDataDir -ErrorAction SilentlyContinue)) {
+        $hasData = $true
+    }
+    
+    if ((Test-Path $ExtensionsDir) -and (Get-ChildItem -Path $ExtensionsDir -ErrorAction SilentlyContinue)) {
+        $hasExtensions = $true
+    }
+    
+    return ($hasData -or $hasExtensions)
+}
+
+# Create empty data directories for fresh portable installation
+function New-EmptyPortableData {
+    param(
+        [string]$DataDir
+    )
+    
+    Write-Info "Creating fresh portable data structure..."
+    
+    # Create data directory structure
+    New-Item -Path $DataDir -ItemType Directory -Force | Out-Null
+    
+    # Create empty user-data directory
+    $userDataTarget = Join-Path $DataDir "user-data"
+    Write-Info "Creating empty user-data directory"
+    New-Item -Path $userDataTarget -ItemType Directory -Force | Out-Null
+    
+    # Create empty extensions directory
+    $extensionsTarget = Join-Path $DataDir "extensions"
+    Write-Info "Creating empty extensions directory"
+    New-Item -Path $extensionsTarget -ItemType Directory -Force | Out-Null
+    
+    # Create tmp directory for portable tmp
+    $tmpDir = Join-Path $DataDir "tmp"
+    New-Item -Path $tmpDir -ItemType Directory -Force | Out-Null
+    Write-Info "Created tmp directory for portable mode"
+}
+
+# Install a fresh portable VS Code installation (no migration)
+function Install-PortableVSCode {
     param(
         [string]$Destination
     )
@@ -232,11 +280,93 @@ function New-PortableVSCode {
         # Clean up temporary extraction directory
         Remove-Item -Path $tempExtractDir -Recurse -Force
         
-        # Create data directory and migrate user data
+        # Create empty data directory structure
         $dataDir = Join-Path $Destination "data"
-        Copy-UserData -DataDir $dataDir
+        New-EmptyPortableData -DataDir $dataDir
         
-        Write-Success "Portable VS Code created successfully at: $Destination"
+        Write-Success "Fresh portable VS Code installed successfully at: $Destination"
+        Write-Info "You can now run VS Code with: $Destination\Code.exe"
+    }
+    finally {
+        # Clean up temporary files
+        if (Test-Path $tempArchive) {
+            Remove-Item -Path $tempArchive -Force
+        }
+    }
+}
+
+# Create a new portable VS Code installation
+function New-PortableVSCode {
+    param(
+        [string]$Destination,
+        [bool]$NoMigrate = $false
+    )
+    
+    if ([string]::IsNullOrWhiteSpace($Destination)) {
+        Write-Error "Destination folder not specified"
+        Show-Usage
+        exit 1
+    }
+    
+    # Convert to absolute path
+    $Destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination)
+    
+    # Check if destination exists
+    if (Test-Path $Destination) {
+        Write-Error "Destination already exists: $Destination"
+        exit 1
+    }
+    
+    # Create destination directory
+    New-Item -Path $Destination -ItemType Directory -Force | Out-Null
+    Write-Info "Created destination directory: $Destination"
+    
+    # Download VS Code
+    $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
+    try {
+        Get-VSCode -OutputPath $tempArchive
+        
+        # Extract VS Code to a temporary directory first
+        $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -Path $tempExtractDir -ItemType Directory -Force | Out-Null
+        
+        Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
+        
+        # Move contents from the extracted subdirectory to the destination
+        $extractedDir = Get-ChildItem -Path $tempExtractDir -Directory | Select-Object -First 1
+        if ($extractedDir) {
+            Get-ChildItem -Path $extractedDir.FullName | Move-Item -Destination $Destination
+        } else {
+            # If no subdirectory, move all contents
+            Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $Destination
+        }
+        
+        # Clean up temporary extraction directory
+        Remove-Item -Path $tempExtractDir -Recurse -Force
+        
+        # Create data directory
+        $dataDir = Join-Path $Destination "data"
+        
+        # Decide whether to migrate or create fresh
+        if ($NoMigrate) {
+            Write-Info "Skipping migration due to -NoMigrate flag"
+            New-EmptyPortableData -DataDir $dataDir
+            Write-Success "Fresh portable VS Code created successfully at: $Destination"
+        } else {
+            if (Test-SystemInstallation) {
+                Write-Info "System VS Code installation found, migrating data..."
+                Copy-UserData -DataDir $dataDir
+                Write-Success "Portable VS Code created successfully at: $Destination"
+                Write-Info "Your existing settings and extensions have been migrated"
+            } else {
+                Write-Warning "No VS Code system installation found"
+                Write-Info "Creating fresh portable installation..."
+                New-EmptyPortableData -DataDir $dataDir
+                Write-Success "Fresh portable VS Code created successfully at: $Destination"
+                Write-Info "You can configure VS Code from scratch"
+            }
+        }
+        
         Write-Info "You can now run VS Code with: $Destination\Code.exe"
     }
     finally {
@@ -339,7 +469,7 @@ function Main {
     
     switch ($Command.ToLower()) {
         "create" {
-            New-PortableVSCode -Destination $Path
+            New-PortableVSCode -Destination $Path -NoMigrate $NoMigrate
         }
         "upgrade" {
             Update-PortableVSCode -PortableFolder $Path

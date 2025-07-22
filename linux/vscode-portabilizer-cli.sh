@@ -22,9 +22,9 @@ fi
 chmod +x "$PORTABILIZER"
 
 echo "Available commands:"
-echo "1. Create a new portable VS Code installation"
-echo "2. Upgrade an existing portable installation"
-echo "3. Show help"
+echo "1. Create portable VS Code (auto-migrate if system installation exists)"
+echo "2. Create fresh portable VS Code (no migration)"
+echo "3. Upgrade an existing portable installation"
 echo
 
 read -p "Enter your choice (1-3): " choice
@@ -36,10 +36,19 @@ case $choice in
             echo "Error: Destination folder cannot be empty"
             exit 1
         fi
-        echo "Creating portable VS Code at: $dest_folder"
+        echo "Creating portable VS Code (auto-migrate if system installation exists) at: $dest_folder"
         "$PORTABILIZER" create "$dest_folder"
         ;;
     2)
+        read -p "Enter destination folder (e.g., /tmp/vscode-fresh): " dest_folder
+        if [ -z "$dest_folder" ]; then
+            echo "Error: Destination folder cannot be empty"
+            exit 1
+        fi
+        echo "Creating fresh portable VS Code at: $dest_folder"
+        "$PORTABILIZER" create --no-migrate "$dest_folder"
+        ;;
+    3)
         read -p "Enter existing portable folder path: " portable_folder
         if [ -z "$portable_folder" ]; then
             echo "Error: Portable folder path cannot be empty"
@@ -47,9 +56,6 @@ case $choice in
         fi
         echo "Upgrading portable VS Code at: $portable_folder"
         "$PORTABILIZER" upgrade "$portable_folder"
-        ;;
-    3)
-        "$PORTABILIZER" --help
         ;;
     *)
         echo "Invalid choice. Please run the script again."

@@ -41,12 +41,13 @@ vscode-portabilizer v${VERSION}
 Tool to create and upgrade VS Code portable installations on Linux
 
 Usage:
-    $0 create <destination_folder>    - Create a new portable VS Code installation
-    $0 upgrade <portable_folder>      - Upgrade an existing portable VS Code installation
-    $0 --help                         - Show this help message
+    $0 create [--no-migrate] <destination_folder>  - Create a new portable VS Code installation
+    $0 upgrade <portable_folder>                    - Upgrade an existing portable VS Code installation
+    $0 --help                                       - Show this help message
 
 Examples:
-    $0 create /opt/vscode-portable
+    $0 create /opt/vscode-portable                  # Create with migration (if system installation exists)
+    $0 create --no-migrate /opt/vscode-portable     # Create without migration (fresh installation)
     $0 upgrade /opt/vscode-portable
 
 Requirements:
@@ -55,7 +56,9 @@ Requirements:
     - sudo access for setting sandbox permissions
 
 Notes:
-    - The create command will migrate your current VS Code configuration
+    - The create command migrates your current VS Code configuration by default if found
+    - Use --no-migrate to skip migration and create a fresh installation
+    - If no system VS Code installation is found, a fresh installation is created automatically
     - The upgrade command preserves your data folder while updating VS Code
 EOF
 }
@@ -122,7 +125,7 @@ extract_vscode() {
     tar -xzf "$archive" -C "$destination" --strip-components=1
 }
 
-# Copy user data and extensions
+# Copy user data and extensions to portable data folder
 migrate_user_data() {
     local data_dir="$1"
     
@@ -150,11 +153,76 @@ migrate_user_data() {
         print_info "Creating empty extensions directory"
         mkdir -p "$data_dir/extensions"
     fi
+
+    # Create tmp directory for portable tmp
+    mkdir -p "$data_dir/tmp"
+}
+
+# Create empty data directories for fresh portable installation
+create_empty_data() {
+    local data_dir="$1"
+    
+    print_info "Creating fresh portable data structure..."
+    
+    # Create data directory structure
+    mkdir -p "$data_dir"
+    
+    # Create empty user-data directory
+    print_info "Creating empty user-data directory"
+    mkdir -p "$data_dir/user-data"
+    
+    # Create empty extensions directory
+    print_info "Creating empty extensions directory"
+    mkdir -p "$data_dir/extensions"
+    
+    # Create tmp directory for portable tmp
+    mkdir -p "$data_dir/tmp"
+}
+
+# Check if VS Code system installation exists
+check_system_installation() {
+    local has_data=false
+    local has_extensions=false
+    
+    if [ -d "$USER_DATA_DIR" ] && [ -n "$(ls -A "$USER_DATA_DIR" 2>/dev/null)" ]; then
+        has_data=true
+    fi
+    
+    if [ -d "$EXTENSIONS_DIR" ] && [ -n "$(ls -A "$EXTENSIONS_DIR" 2>/dev/null)" ]; then
+        has_extensions=true
+    fi
+    
+    if [ "$has_data" = true ] || [ "$has_extensions" = true ]; then
+        return 0  # System installation found
+    else
+        return 1  # No system installation found
+    fi
 }
 
 # Create a new portable VS Code installation
 create_portable() {
-    local destination="$1"
+    local no_migrate=false
+    local destination=""
+    
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --no-migrate)
+                no_migrate=true
+                shift
+                ;;
+            *)
+                if [ -z "$destination" ]; then
+                    destination="$1"
+                else
+                    print_error "Too many arguments"
+                    show_usage
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
     
     if [ -z "$destination" ]; then
         print_error "Destination folder not specified"
@@ -182,14 +250,29 @@ create_portable() {
     # Set sandbox permissions
     set_sandbox_permissions "$destination"
     
-    # Create data directory and migrate user data
+    # Create data directory
     local data_dir="$destination/data"
-    migrate_user_data "$data_dir"
     
-    # Create tmp directory for portable tmp
-    mkdir -p "$data_dir/tmp"
+    # Decide whether to migrate or create fresh
+    if [ "$no_migrate" = true ]; then
+        print_info "Skipping migration due to --no-migrate flag"
+        create_empty_data "$data_dir"
+        print_success "Fresh portable VS Code created successfully at: $destination"
+    else
+        if check_system_installation; then
+            print_info "System VS Code installation found, migrating data..."
+            migrate_user_data "$data_dir"
+            print_success "Portable VS Code created successfully at: $destination"
+            print_info "Your existing settings and extensions have been migrated"
+        else
+            print_warning "No VS Code system installation found"
+            print_info "Creating fresh portable installation..."
+            create_empty_data "$data_dir"
+            print_success "Fresh portable VS Code created successfully at: $destination"
+            print_info "You can configure VS Code from scratch"
+        fi
+    fi
     
-    print_success "Portable VS Code created successfully at: $destination"
     print_info "You can now run VS Code with: $destination/code"
 }
 
@@ -249,7 +332,8 @@ main() {
     
     case "${1:-}" in
         "create")
-            create_portable "$2"
+            shift  # Remove 'create' from arguments
+            create_portable "$@"
             ;;
         "upgrade")
             upgrade_portable "$2"
