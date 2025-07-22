@@ -1,0 +1,363 @@
+# vscode-portabilizer.ps1 - Tool to create and upgrade VS Code portable installations on Windows
+# Based on: https://code.visualstudio.com/docs/editor/portable
+
+param(
+    [Parameter(Position=0)]
+    [ValidateSet('create', 'upgrade', 'help', '--help', '-h')]
+    [string]$Command,
+    
+    [Parameter(Position=1)]
+    [string]$Path
+)
+
+$ErrorActionPreference = "Stop"
+$Version = "1.0.0"
+$VSCodeDownloadUrl = "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-archive"
+$UserDataDir = "$env:APPDATA\Code"
+$ExtensionsDir = "$env:USERPROFILE\.vscode\extensions"
+
+# ANSI color codes for PowerShell
+$Colors = @{
+    Red = "`e[31m"
+    Green = "`e[32m"
+    Yellow = "`e[33m"
+    Blue = "`e[34m"
+    Reset = "`e[0m"
+}
+
+# Print colored output functions
+function Write-Info {
+    param([string]$Message)
+    Write-Host "$($Colors.Blue)[INFO]$($Colors.Reset) $Message"
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host "$($Colors.Green)[SUCCESS]$($Colors.Reset) $Message"
+}
+
+function Write-Warning {
+    param([string]$Message)
+    Write-Host "$($Colors.Yellow)[WARNING]$($Colors.Reset) $Message"
+}
+
+function Write-Error {
+    param([string]$Message)
+    Write-Host "$($Colors.Red)[ERROR]$($Colors.Reset) $Message"
+}
+
+# Show usage information
+function Show-Usage {
+    @"
+vscode-portabilizer v$Version
+Tool to create and upgrade VS Code portable installations on Windows
+
+Usage:
+    .\vscode-portabilizer.ps1 create <destination_folder>    - Create a new portable VS Code installation
+    .\vscode-portabilizer.ps1 upgrade <portable_folder>      - Upgrade an existing portable VS Code installation
+    .\vscode-portabilizer.ps1 help                          - Show this help message
+
+Examples:
+    .\vscode-portabilizer.ps1 create C:\Tools\VSCode-Portable
+    .\vscode-portabilizer.ps1 upgrade C:\Tools\VSCode-Portable
+
+Requirements:
+    - Windows 10 or Windows 11
+    - PowerShell 5.1 or later
+    - Internet connection for downloading VS Code
+    - Administrator privileges may be required for some operations
+
+Notes:
+    - The create command will migrate your current VS Code configuration
+    - The upgrade command preserves your data folder while updating VS Code
+    - Only works with VS Code ZIP archives (portable mode)
+"@
+}
+
+# Check PowerShell version and requirements
+function Test-Prerequisites {
+    Write-Info "Checking prerequisites..."
+    
+    # Check PowerShell version
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        Write-Error "PowerShell 5.1 or later is required. Current version: $($PSVersionTable.PSVersion)"
+        exit 1
+    }
+    
+    # Check Windows version
+    $winVersion = [System.Environment]::OSVersion.Version
+    if ($winVersion.Major -lt 10) {
+        Write-Error "Windows 10 or later is required. Current version: $($winVersion)"
+        exit 1
+    }
+    
+    # Check if running on Windows
+    if ($PSVersionTable.Platform -and $PSVersionTable.Platform -ne "Win32NT") {
+        Write-Error "This script is designed for Windows systems only"
+        exit 1
+    }
+    
+    Write-Success "Prerequisites check passed"
+}
+
+# Download VS Code using Invoke-WebRequest
+function Get-VSCode {
+    param(
+        [string]$OutputPath
+    )
+    
+    Write-Info "Downloading VS Code from: $VSCodeDownloadUrl"
+    
+    try {
+        # Create a progress handler
+        $ProgressPreference = 'Continue'
+        
+        # Download with progress indication
+        Invoke-WebRequest -Uri $VSCodeDownloadUrl -OutFile $OutputPath -UseBasicParsing
+        
+        Write-Success "Download completed: $OutputPath"
+    }
+    catch {
+        Write-Error "Failed to download VS Code: $($_.Exception.Message)"
+        throw
+    }
+}
+
+# Extract VS Code ZIP archive
+function Expand-VSCode {
+    param(
+        [string]$ArchivePath,
+        [string]$DestinationPath
+    )
+    
+    Write-Info "Extracting VS Code to: $DestinationPath"
+    
+    try {
+        # Use .NET System.IO.Compression.ZipFile for better performance
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $DestinationPath)
+        
+        Write-Success "Extraction completed"
+    }
+    catch {
+        Write-Error "Failed to extract VS Code archive: $($_.Exception.Message)"
+        throw
+    }
+}
+
+# Copy user data and extensions to portable data folder
+function Copy-UserData {
+    param(
+        [string]$DataDir
+    )
+    
+    Write-Info "Migrating user data and extensions..."
+    
+    # Create data directory structure
+    New-Item -Path $DataDir -ItemType Directory -Force | Out-Null
+    
+    # Copy user data
+    $userDataTarget = Join-Path $DataDir "user-data"
+    if (Test-Path $UserDataDir) {
+        Write-Info "Copying user data from: $UserDataDir"
+        Copy-Item -Path $UserDataDir -Destination $userDataTarget -Recurse -Force
+    } else {
+        Write-Warning "User data directory not found: $UserDataDir"
+        Write-Info "Creating empty user-data directory"
+        New-Item -Path $userDataTarget -ItemType Directory -Force | Out-Null
+    }
+    
+    # Copy extensions
+    $extensionsTarget = Join-Path $DataDir "extensions"
+    if (Test-Path $ExtensionsDir) {
+        Write-Info "Copying extensions from: $ExtensionsDir"
+        Copy-Item -Path $ExtensionsDir -Destination $extensionsTarget -Recurse -Force
+    } else {
+        Write-Warning "Extensions directory not found: $ExtensionsDir"
+        Write-Info "Creating empty extensions directory"
+        New-Item -Path $extensionsTarget -ItemType Directory -Force | Out-Null
+    }
+    
+    # Create tmp directory for portable tmp
+    $tmpDir = Join-Path $DataDir "tmp"
+    New-Item -Path $tmpDir -ItemType Directory -Force | Out-Null
+    Write-Info "Created tmp directory for portable mode"
+}
+
+# Create a new portable VS Code installation
+function New-PortableVSCode {
+    param(
+        [string]$Destination
+    )
+    
+    if ([string]::IsNullOrWhiteSpace($Destination)) {
+        Write-Error "Destination folder not specified"
+        Show-Usage
+        exit 1
+    }
+    
+    # Convert to absolute path
+    $Destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination)
+    
+    # Check if destination exists
+    if (Test-Path $Destination) {
+        Write-Error "Destination already exists: $Destination"
+        exit 1
+    }
+    
+    # Create destination directory
+    New-Item -Path $Destination -ItemType Directory -Force | Out-Null
+    Write-Info "Created destination directory: $Destination"
+    
+    # Download VS Code
+    $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
+    try {
+        Get-VSCode -OutputPath $tempArchive
+        
+        # Extract VS Code to a temporary directory first
+        $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -Path $tempExtractDir -ItemType Directory -Force | Out-Null
+        
+        Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
+        
+        # Move contents from the extracted subdirectory to the destination
+        $extractedDir = Get-ChildItem -Path $tempExtractDir -Directory | Select-Object -First 1
+        if ($extractedDir) {
+            Get-ChildItem -Path $extractedDir.FullName | Move-Item -Destination $Destination
+        } else {
+            # If no subdirectory, move all contents
+            Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $Destination
+        }
+        
+        # Clean up temporary extraction directory
+        Remove-Item -Path $tempExtractDir -Recurse -Force
+        
+        # Create data directory and migrate user data
+        $dataDir = Join-Path $Destination "data"
+        Copy-UserData -DataDir $dataDir
+        
+        Write-Success "Portable VS Code created successfully at: $Destination"
+        Write-Info "You can now run VS Code with: $Destination\Code.exe"
+    }
+    finally {
+        # Clean up temporary files
+        if (Test-Path $tempArchive) {
+            Remove-Item -Path $tempArchive -Force
+        }
+    }
+}
+
+# Upgrade an existing portable VS Code installation
+function Update-PortableVSCode {
+    param(
+        [string]$PortableFolder
+    )
+    
+    if ([string]::IsNullOrWhiteSpace($PortableFolder)) {
+        Write-Error "Portable folder not specified"
+        Show-Usage
+        exit 1
+    }
+    
+    # Convert to absolute path
+    $PortableFolder = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PortableFolder)
+    
+    if (-not (Test-Path $PortableFolder)) {
+        Write-Error "Portable folder does not exist: $PortableFolder"
+        exit 1
+    }
+    
+    $dataFolder = Join-Path $PortableFolder "data"
+    if (-not (Test-Path $dataFolder)) {
+        Write-Error "Not a valid portable VS Code installation (data folder not found): $PortableFolder"
+        exit 1
+    }
+    
+    # Backup data directory
+    $backupDir = Join-Path ([System.IO.Path]::GetTempPath()) ("vscode-backup-" + [System.Guid]::NewGuid().ToString())
+    Write-Info "Backing up data directory to: $backupDir"
+    Copy-Item -Path $dataFolder -Destination $backupDir -Recurse -Force
+    
+    try {
+        # Download new VS Code version
+        $tempArchive = [System.IO.Path]::GetTempFileName() + ".zip"
+        Get-VSCode -OutputPath $tempArchive
+        
+        # Remove old VS Code files (but keep data)
+        Write-Info "Removing old VS Code files..."
+        Get-ChildItem -Path $PortableFolder | Where-Object { $_.Name -ne "data" } | Remove-Item -Recurse -Force
+        
+        # Extract new VS Code to a temporary directory
+        $tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -Path $tempExtractDir -ItemType Directory -Force | Out-Null
+        
+        Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
+        
+        # Move contents from the extracted subdirectory to the portable folder
+        $extractedDir = Get-ChildItem -Path $tempExtractDir -Directory | Select-Object -First 1
+        if ($extractedDir) {
+            Get-ChildItem -Path $extractedDir.FullName | Move-Item -Destination $PortableFolder
+        } else {
+            # If no subdirectory, move all contents
+            Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $PortableFolder
+        }
+        
+        # Clean up temporary files
+        Remove-Item -Path $tempExtractDir -Recurse -Force
+        Remove-Item -Path $tempArchive -Force
+        
+        # Restore data directory
+        Write-Info "Restoring data directory..."
+        Remove-Item -Path $dataFolder -Recurse -Force
+        Move-Item -Path $backupDir -Destination $dataFolder
+        
+        Write-Success "Portable VS Code upgraded successfully at: $PortableFolder"
+        Write-Info "You can now run the updated VS Code with: $PortableFolder\Code.exe"
+    }
+    catch {
+        # Restore backup if something went wrong
+        Write-Warning "Upgrade failed, restoring backup..."
+        if (Test-Path $backupDir) {
+            if (Test-Path $dataFolder) {
+                Remove-Item -Path $dataFolder -Recurse -Force
+            }
+            Move-Item -Path $backupDir -Destination $dataFolder
+        }
+        throw
+    }
+    finally {
+        # Clean up backup if it still exists
+        if (Test-Path $backupDir) {
+            Remove-Item -Path $backupDir -Recurse -Force
+        }
+    }
+}
+
+# Main execution logic
+function Main {
+    Test-Prerequisites
+    
+    switch ($Command.ToLower()) {
+        "create" {
+            New-PortableVSCode -Destination $Path
+        }
+        "upgrade" {
+            Update-PortableVSCode -PortableFolder $Path
+        }
+        { $_ -in @("help", "--help", "-h") } {
+            Show-Usage
+        }
+        default {
+            if ([string]::IsNullOrWhiteSpace($Command)) {
+                Write-Error "No command specified"
+            } else {
+                Write-Error "Unknown command: $Command"
+            }
+            Show-Usage
+            exit 1
+        }
+    }
+}
+
+# Run main function
+Main
