@@ -268,14 +268,10 @@ function Install-PortableVSCode {
         
         Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
         
-        # Move contents from the extracted subdirectory to the destination
-        $extractedDir = Get-ChildItem -Path $tempExtractDir -Directory | Select-Object -First 1
-        if ($extractedDir) {
-            Get-ChildItem -Path $extractedDir.FullName | Move-Item -Destination $Destination
-        } else {
-            # If no subdirectory, move all contents
-            Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $Destination
-        }
+        # Move contents from the extracted directory to the destination
+        # VS Code ZIP contains files directly (no root subdirectory)
+        Write-Info "Moving VS Code files from extraction directory"
+        Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $Destination
         
         # Clean up temporary extraction directory
         Remove-Item -Path $tempExtractDir -Recurse -Force
@@ -423,14 +419,10 @@ function Update-PortableVSCode {
         
         Expand-VSCode -ArchivePath $tempArchive -DestinationPath $tempExtractDir
         
-        # Move contents from the extracted subdirectory to the portable folder
-        $extractedDir = Get-ChildItem -Path $tempExtractDir -Directory | Select-Object -First 1
-        if ($extractedDir) {
-            Get-ChildItem -Path $extractedDir.FullName | Move-Item -Destination $PortableFolder
-        } else {
-            # If no subdirectory, move all contents
-            Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $PortableFolder
-        }
+        # Move contents from the extracted directory to the portable folder
+        # VS Code ZIP contains files directly (no root subdirectory)
+        Write-Info "Moving VS Code files from extraction directory"
+        Get-ChildItem -Path $tempExtractDir | Move-Item -Destination $PortableFolder
         
         # Clean up temporary files
         Remove-Item -Path $tempExtractDir -Recurse -Force
