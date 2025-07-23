@@ -18,34 +18,25 @@ $VSCodeDownloadUrl = "https://code.visualstudio.com/sha/download?build=stable&os
 $UserDataDir = "$env:APPDATA\Code"
 $ExtensionsDir = "$env:USERPROFILE\.vscode\extensions"
 
-# ANSI color codes for PowerShell
-$Colors = @{
-    Red = "`e[31m"
-    Green = "`e[32m"
-    Yellow = "`e[33m"
-    Blue = "`e[34m"
-    Reset = "`e[0m"
-}
-
-# Print colored output functions
+# Print colored output functions using PowerShell's built-in color support
 function Write-Info {
     param([string]$Message)
-    Write-Host "$($Colors.Blue)[INFO]$($Colors.Reset) $Message"
+    Write-Host "[INFO] $Message" -ForegroundColor Blue
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "$($Colors.Green)[SUCCESS]$($Colors.Reset) $Message"
+    Write-Host "[SUCCESS] $Message" -ForegroundColor Green
 }
 
 function Write-Warning {
     param([string]$Message)
-    Write-Host "$($Colors.Yellow)[WARNING]$($Colors.Reset) $Message"
+    Write-Host "[WARNING] $Message" -ForegroundColor Yellow
 }
 
 function Write-Error {
     param([string]$Message)
-    Write-Host "$($Colors.Red)[ERROR]$($Colors.Reset) $Message"
+    Write-Host "[ERROR] $Message" -ForegroundColor Red
 }
 
 # Show usage information
