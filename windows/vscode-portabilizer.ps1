@@ -89,19 +89,6 @@ function Test-Prerequisites {
         exit 1
     }
     
-    # Check Windows version
-    $winVersion = [System.Environment]::OSVersion.Version
-    if ($winVersion.Major -lt 10) {
-        Write-Error "Windows 10 or later is required. Current version: $($winVersion)"
-        exit 1
-    }
-    
-    # Check if running on Windows
-    if ($PSVersionTable.Platform -and $PSVersionTable.Platform -ne "Win32NT") {
-        Write-Error "This script is designed for Windows systems only"
-        exit 1
-    }
-    
     Write-Success "Prerequisites check passed"
 }
 
